@@ -367,6 +367,7 @@ REAL              :: Winddir
 REAL              :: WFLowerBd
 
 REAL              :: next_hub_height                      ! downwind turbine hub height
+INTEGER           :: ranW                                 ! Whether or not use random walk model
 
 
 END MODULE parameter_file_data
@@ -453,8 +454,8 @@ MODULE TI_downstream_data
     REAL               ::  TI_downstream_node        ! the TI at a specfic point in the inbestigated cross plane
     REAL               ::  TI_node_temp
     REAL               ::  TI_node
-    REAL               ::  TI_accumulation
-    REAL               ::  TI_apprant_accumulation
+    REAL(kind=8)       ::  TI_accumulation
+    REAL(kind=8)       ::  TI_apprant_accumulation
     REAl               ::  TI_average                ! THE AVERAGE TI OF THE CROSS PLANE
     !REAL               ::  TI_total                  ! The Total TI
     REAL               ::  TI_apprant                ! The TI due to the meadering
@@ -542,3 +543,42 @@ MODULE smooth_wake_shifted_velocity_data
     REAL       ::   unit                          ! single unit length  R/ppR
   
 END MODULE smooth_wake_shifted_velocity_data
+
+    
+!===============================================================================
+MODULE RW_data
+!...............................................................................
+! Randow walk model subroutine data      
+!...............................................................................
+
+    REAL ( kind = 8 ) cdf    ! left region
+    REAL ( kind = 8 ) cdf_right    ! right region
+    REAL ( kind = 8 ) pdf
+    REAL ( kind = 8 ) x
+    REAL ( kind = 8 ) mean
+    REAL ( kind = 8 ) bound
+    REAL ( kind = 8 ) sd
+    REAL ( kind = 8 ) cur
+    REAL randNum
+    REAL step
+    REAL step_size  
+    REAL(kind = 8), ALLOCATABLE :: res(:)
+    REAL(kind = 8), ALLOCATABLE :: arr(:)
+    REAL, ALLOCATABLE :: resTemp(:)     ! the wake center of the UPWIND turbine
+    REAL, ALLOCATABLE :: curTime(:)
+    INTEGER ( kind = 4 ) status
+    INTEGER ( kind = 4 ) which
+    INTEGER :: npoint
+    INTEGER :: i
+    INTEGER :: use_nth
+    INTEGER :: size_use
+    REAL  :: total
+    REAL  :: res_std
+    REAL  :: res_mean
+    REAL  :: interpLoc
+    REAL  :: ILo
+    REAL  :: IHi
+    INTEGER :: totalTime
+    INTEGER :: J
+
+END MODULE RW_data

@@ -24,7 +24,7 @@ SUBROUTINE calculate_DWM ( blade_radius, num_element, r_t  )
 !    The output is wake_position
 !.................................................................................. 
     
-    USE   parameter_file_data,          ONLY: p_p_r
+    USE   parameter_file_data,          ONLY: p_p_r, ranW
     USE   read_turbine_position_data,   ONLY: downwindturbine_number,downwind_turbine_projected_distance,downwind_align_angle
     USE   read_upwind_result_file_data, ONLY: TI_downstream, smoothed_velocity_array, vel_matrix, small_scale_TI_downstream
     USE   filter_velocity_data,         ONLY: total_velocity, total_velocity_counter
@@ -98,8 +98,10 @@ SUBROUTINE calculate_DWM ( blade_radius, num_element, r_t  )
     END IF
                 
   !-----------------------------------------------------------------------------------------------------
-         
-    CALL Get_wake_center ( wake_width, wake_position )
+    IF (ranW==0)   THEN     
+        CALL Get_wake_center ( wake_width, wake_position )
+    ELSE IF (ranW == 1)   THEN
+    END IF
     
          !OPEN(unit = 10, status='replace',file='DWM\results\meandered_wake_center.bin',form='unformatted')    
          !WRITE(10)   wake_position(:,:,:)                        ! write the downstream meandered wake center                                                                                                                                                                      

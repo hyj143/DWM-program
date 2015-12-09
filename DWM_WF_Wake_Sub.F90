@@ -1408,11 +1408,86 @@ SUBROUTINE Get_wake_center ( wakewidth, wake_center )
     !OPEN(unit = 10, status='replace',file='DWM\results\upstream_meanU.bin',form='unformatted')    
     !WRITE(10)   Mean_FFWS                                                             ! write the Mean_FFWS                                                                                                                                                                       
     !CLOSE(10)
-    
-
-    
+        
 END SUBROUTINE Get_wake_center
 
+!---------------------------------------------------------------------------------
+SUBROUTINE Get_wake_center_RW (wake_center)
+!................................................................................
+! This routine is called to calculate the wake center by using RANDOM WALK MODEL
+! Have the same output format as the original Get_wake_center model
+!.................................................................................
+    USE meandering_data 
+    USE parameter_file_data, ONLY : WakePosition_1, WakePosition_2, hub_height
+    USE RW_data
+    
+    REAL, ALLOCATABLE     ::   wake_center (:,:,:)   ! 1st dimension: at each second, 2nd dimension: WakePosition_2+1, 3rd dimension: x(fake), y, and z
+    INTEGER :: maxVal = 0
+    INTEGER :: minVal = 0
+    
+    
+    use_nth   = 40
+    npoint    = WakePosition_1 * use_nth
+    mean      = 0.0
+    sd        = 2.673915744612258e+02
+    which     = 1
+    step_size = sd/50
+    scale_factor = 10
+    
+    IF (.NOT. ALLOCATED(arr))           ALLOCATE (arr(npoint))
+    IF (.NOT. ALLOCATED(wake_center))   ALLOCATE (wake_center(WakePosition_1, WakePosition_2+1, 3))
+    
+    arr(1)    = 0.0
+    total     = 0
+    CALL random_seed()
+    
+    DO i=2,npoint
+        cur = arr(i-1)
+        CALL cdfnor(which, cdf, cdf_right, cur, mean, sd, status, bound) ! calculate the CDF
+        CALL random_number (randNum) 
+        IF (randNum <= cdf)   THEN   ! will move to left
+            CALL random_number (randNum)
+            IF (randNum<=0.1)   THEN
+                step = 0.0
+            ELSE
+                step = step_size
+            END IF
+            arr(i) = arr(i-1) - step
+        ELSE
+            CALL random_number (randNum)
+            IF (randNum<=0.1)   THEN
+                step = 0.0
+            ELSE
+                step = step_size
+            END IF
+            arr(i) = arr(i-1) + step
+        END IF
+    END DO
+    
+    ! thining process
+    DO i = 1, WakePosition_1
+        DO j = 1, WakePosition_2+1
+            wake_center(i,j,1) = 1
+            wake_center(i,j,2) = arr((i-1)*use_nth+1) 
+            wake_center(i,j,3) = arr((i-1)*use_nth+1) + REAL(hub_height)
+            IF (wake_center(i,j,3) < 5) THEN
+                wake_center(i,j,3) = 5
+            END IF
+            
+            IF (wake_center(i,j,2) > maxVal) THEN
+                maxVal = wake_center(i,j,2)
+            END IF
+            IF (wake_center(i,j,2) < minVal) THEN
+                minVal = wake_center(i,j,2)
+            END IF
+        END DO
+    END DO
+    
+    res_mean = SUM(wake_center(1:WakePosition_1,1,2)) / WakePosition_1
+    res_std = SQRT (SUM((wake_center(1:WakePosition_1,1,2)-res_mean)**2) / WakePosition_1)
+
+END SUBROUTINE Get_wake_center_RW 
+    
 !----------------------------------------------------------------------------------
 FUNCTION TI_downstream_total (spacing,angle,velocity_matrix)   ! name should be calculate_TI_downstream
 !..................................................................................
@@ -1477,8 +1552,8 @@ FUNCTION TI_downstream_total (spacing,angle,velocity_matrix)   ! name should be 
              
              distance = ( (y_axis_turbine-wake_center_y)**2 + (z_axis_turbine-wake_center_z)**2)**0.5
              
-             distance_index = CEILING(distance/(R/ppR))
-             
+             distance_index = FLOOR(distance/(R/ppR)) + 1
+              
              TI_node_temp = TI_downstream_matrix( cross_plane_position_TI,distance_index )
              
              IF ( TI_node_temp > (TI/100*(Mean_FFWS/Uambient)) ) THEN
@@ -1561,6 +1636,7 @@ FUNCTION smallscale_TI (spacing,angle,velocity_matrix)
     REAL             ::       velocity_matrix(:,:)    ! the velocity matrix at the certain downswind turbine
     
     REAL             ::       c_uw
+    REAL             ::       curTI
     
    !-------------------------------------------------------------------------------------------------
    ! calculate the TI at each node at the downstream turbine plane from the wake deficit calculation
@@ -1592,6 +1668,7 @@ FUNCTION smallscale_TI (spacing,angle,velocity_matrix)
     counter2 = 0
     TI_accumulation = 0
     TI_apprant_accumulation = 0
+    curTI  = TI/100*(Mean_FFWS/Uambient)
     
     DO i=1,WakePosition_1,1
        DO j=ANINT(HubHt-Rscale*R),ANINT(HubHt+Rscale*R),1      ! Z direction
@@ -1604,17 +1681,18 @@ FUNCTION smallscale_TI (spacing,angle,velocity_matrix)
              
              distance = ( (y_axis_turbine-wake_center_y)**2 + (z_axis_turbine-wake_center_z)**2)**0.5
              
-             distance_index = CEILING(distance/(R/ppR))
+             distance_index = FLOOR(distance/(R/ppR)) + 1
              
              TI_node_temp = TI_downstream_matrix( cross_plane_position_TI,distance_index )
              
-             IF ( TI_node_temp > (TI/100*(Mean_FFWS/Uambient)) ) THEN
-                 TI_node = TI_node_temp
+             
+             IF ( TI_node_temp > curTI ) THEN
+                 TI_accumulation = TI_accumulation + TI_node_temp
              ELSE
-                 TI_node = TI/100*(Mean_FFWS/Uambient)
+                 TI_accumulation = TI_accumulation + curTI
              END IF
              
-             TI_accumulation = TI_accumulation + TI_node
+             !TI_accumulation = TI_accumulation + MAX(TI_node_temp, TI/100*(Mean_FFWS/Uambient))
              counter1 = counter1+1
              
           END DO
@@ -1637,11 +1715,12 @@ FUNCTION shifted_velocity( y, z, upwind_mean_u, Uwake, WakeCenter,spacing,angle)
 !............................................................................
  
     USE    SimCont,                       ONLY: ZTime
-    USE    parameter_file_data,              ONLY: p_p_r, Wind_file_Mean_u,hub_height
+    USE    parameter_file_data,              ONLY: p_p_r, Wind_file_Mean_u,hub_height, ranW, WakePosition_1
     USE    meandering_data,               ONLY: U_factor
     
     USE    parameter_file_data,           ONLY: hub_height
     USE    TurbConf,                      ONLY: TowerHt
+    USE    RW_data,                       ONLY: resTemp, curTime
 
     REAL       ::   y,z                           ! point location on the y,z axis
     REAL       ::   Uwake(:)                      ! axial velocity of the wake at the downstream turbine plane
@@ -1664,22 +1743,36 @@ FUNCTION shifted_velocity( y, z, upwind_mean_u, Uwake, WakeCenter,spacing,angle)
     REAL       ::   Yshifted
     REAL       ::   Zshifted
     
+
+    INTEGER    ::   ILo
+    
+    
     !z = (hub_height - TowerHt) + z                ! shift the z coordinate based on the new hub height
     
     
     !ALLOCATE  (Uwake(NINT( ppR*Rdomain ))) ! the axis symmetrical velocity
     !ALLOCATE  (WakeCenter( size_of_WakeCenter1,size_of_WakeCenter2,3 ))
     
-    scale_factor = 10
+    IF (ranW /= 1) THEN
+        scale_factor = 10
     
-    time_position = floor(ZTime/( (2*R/p_p_r/upwind_mean_u/1.00)*scale_factor ))+1  ! ZTime/(DWM_time_step*scale_factor)
-              !OPEN (unit=25,file='DWM_WIND_FARM\results\time_position.txt',POSITION='APPEND')
-              !OPEN (unit=25,file="DWM\results\lateral_wake_center.txt",POSITION='APPEND')
-              !WRITE (25,'(I5)'), time_position
+        time_position = floor(ZTime/( (2*R/p_p_r/upwind_mean_u/1.00)*scale_factor ))+1  ! ZTime/(DWM_time_step*scale_factor)
+                !OPEN (unit=25,file='DWM_WIND_FARM\results\time_position.txt',POSITION='APPEND')
+                !OPEN (unit=25,file="DWM\results\lateral_wake_center.txt",POSITION='APPEND')
+                !WRITE (25,'(I5)'), time_position
     
     
-    y0 = WakeCenter(time_position,FLOOR(spacing*p_p_r/scale_factor)+1,2) !+ 2*R*spacing*TAN(skew_angle)
-    z0 = WakeCenter(time_position,FLOOR(spacing*p_p_r/scale_factor)+1,3) !- REAL(TurbRefHt-hub_height)
+        y0 = WakeCenter(time_position,FLOOR(spacing*p_p_r/scale_factor)+1,2) !+ 2*R*spacing*TAN(skew_angle)
+        z0 = WakeCenter(time_position,FLOOR(spacing*p_p_r/scale_factor)+1,3) !- REAL(TurbRefHt-hub_height)
+    ELSE
+        ILo = 1
+        z0 = InterpBin( ZTime, curTime, resTemp, ILo, WakePosition_1)       ! vertical direction
+        IF (z0 < 5) THEN
+            z0 = 5
+        END IF
+        y0 = z0-hub_height                                                  ! horizontal direction
+    END IF
+                      
     
     Yshifted = y + 2*R*spacing*TAN(angle*Pi/180)
     Zshifted = z
@@ -1719,7 +1812,7 @@ SUBROUTINE read_parameter_file()
     !USE   read_turbine_position_data,   ONLY: SimulationOrder_index 
 
     OPEN(unit = 10, status='old',file='DWM-driver\DWM_parameter.bin',form='unformatted')  ! open an existing file
-    READ(10) hub_height, next_hub_height, NumWT, Uambient, TI_amb, r_domain, x_domain, p_p_r, WakePosition_1, WakePosition_2,WFLowerBd, Winddir,Tinfluencer 
+    READ(10) hub_height, next_hub_height, NumWT, Uambient, TI_amb, r_domain, x_domain, p_p_r, WakePosition_1, WakePosition_2,WFLowerBd, Winddir,Tinfluencer, ranW
     CLOSE(10) ! close the file
     
     !hub_height = TowerHt
@@ -1768,10 +1861,11 @@ SUBROUTINE read_upwind_result_file()
 ! and to generate the output variables
 !............................................................................
     USE read_turbine_position_data, ONLY:upwindturbine_number,upwind_turbine_index,WT_index,downwindturbine_number,SimulationOrder_index,Turbine_sort_order
-    USE parameter_file_data,        ONLY:p_p_r,r_domain,WakePosition_1,WakePosition_2,Wind_file_Mean_u
+    USE parameter_file_data,        ONLY:p_p_r,r_domain,WakePosition_1,WakePosition_2,Wind_file_Mean_u, ranW
     USE read_upwind_result_file_data
     USE Element,                    ONLY:NELM
     USE smooth_out_wake_data,       ONLY:length_velocity_array
+    USE RW_data,                    ONLY:resTemp, curTime
     
     CHARACTER(LEN=3)  :: invetigated_turbine_index_character
     CHARACTER(LEN=3)  :: upwind_turbine_index_character
@@ -1899,7 +1993,23 @@ SUBROUTINE read_upwind_result_file()
             ALLOCATE ( vel_matrix                (downwindturbine_number,2*length_velocity_array,2*length_velocity_array) ) 
         END IF
     END IF
-
+    
+    
+    ! If random walk model is used, build the array used in the shifted_velocity subroutine
+    IF (upwindturbine_number > 0) THEN
+        IF (ranW == 1) THEN
+            IF (.NOT. ALLOCATED(curTime)) ALLOCATE (curTime(WakePosition_1))    ! time array 0:1:....
+            DO i = 1, WakePosition_1
+                curTime(i) = i-1
+            END DO
+        
+            IF (.NOT. ALLOCATED(resTemp))  ALLOCATE (resTemp(WakePosition_1))   ! wake center array corresponds to the time array
+            DO i = 1, WakePosition_1
+                resTemp(i) = upwind_wakecenter(1, i, WakePosition_2, 3)                      ! vertical direction (z), y = z-hubHt 
+            END DO
+        END IF
+    END IF
+    
 END SUBROUTINE read_upwind_result_file
 
 !------------------------------------------------------------------------------------------------ 
